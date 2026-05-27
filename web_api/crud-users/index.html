@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Users CRUD </title>
+    <style>
+      html,body{margin:0;padding:16px;font-family:Arial,Helvetica,sans-serif}
+      .container{max-width:980px;margin:0 auto}
+      .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+      input,button{padding:6px}
+      table{width:100%;border-collapse:collapse}
+      th,td{border:1px solid #ccc;padding:6px;text-align:left}
+      .message{min-height:20px;margin-bottom:8px}
+      .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);visibility:hidden}
+      .modal[aria-hidden="false"]{visibility:visible}
+      .modal-content{background:#fff;padding:12px;min-width:300px}
+      .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+    </style>
+  </head>
+  <body>
+    <main class="container">
+      <h1>Users CRUD </h1>
+
+      <section class="controls">
+        <div class="search">
+          <input id="search" placeholder="Search by name..." />
+        </div>
+        <form id="create-form" class="create-form">
+          <input id="name" placeholder="Name" required />
+          <input id="email" type="email" placeholder="Email" required />
+          <input id="phone" placeholder="Phone" />
+          <button type="submit">Add</button>
+        </form>
+      </section>
+
+      <section>
+        <div id="message" class="message" aria-live="polite"></div>
+        <table id="users-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="pagination" class="pagination" style="margin-top:12px;display:flex;gap:6px"></div>
+      </section>
+    </main>
+
+    <div id="modal" class="modal" aria-hidden="true">
+      <div class="modal-content">
+        <h2>Edit User</h2>
+        <form id="edit-form">
+          <input id="edit-name" required />
+          <input id="edit-email" type="email" required />
+          <input id="edit-phone" />
+          <div class="modal-actions">
+            <button type="submit">Save</button>
+            <button type="button" id="cancel-edit">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script type="module">
+      const API_BASE = 'https://jsonplaceholder.typicode.com/users';
+      let users = [];
+      let currentPage = 1;
+      const perPage = 5;
+
+      const els = {
+        tbody: document.querySelector('#users-table tbody'),
+        message: document.getElementById('message'),
+        search: document.getElementById('search'),
+        createForm: document.getElementById('create-form'),
+        pagination: document.getElementById('pagination'),
+        modal: document.getElementById('modal'),
+        editForm: document.getElementById('edit-form')
+      };
+
+      function showMessage(text, isError = false){
+        els.message.textContent = text;
+        els.message.style.color = isError ? 'crimson' : '';
+        if (text) setTimeout(()=>{ els.message.textContent = ''; }, 3000);
+      }
+
+      async function fetchUsers(){
+        try{
+          const res = await fetch(API_BASE);
+          if (!res.ok) throw new Error('Fetch failed');
+          users = await res.json();
+          renderUsers();
+        }catch(err){ showMessage(err.message, true); }
+      }
+
+      function getFiltered(){
+        const q = els.search.value.trim().toLowerCase();
+        if(!q) return users.slice();
+        return users.filter(u => (u.name||'').toLowerCase().includes(q));
+      }
+
+      function renderUsers(){
+        const list = getFiltered();
+        const total = list.length;
+        const pages = Math.max(1, Math.ceil(total / perPage));
+        currentPage = Math.min(currentPage, pages);
+        const start = (currentPage - 1) * perPage;
+        const slice = list.slice(start, start + perPage);
+
+        els.tbody.innerHTML = '';
+        for(const u of slice){
+          const tr = document.createElement('tr');
+          tr.innerHTML = `\n            <td>${escapeHtml(u.name)}</td>\n            <td>${escapeHtml(u.email)}</td>\n            <td>${escapeHtml(u.phone)}</td>\n            <td class=\"actions\">\n              <button data-id=\"${u.id}\" class=\"edit\">Edit</button>\n              <button data-id=\"${u.id}\" class=\"delete\">Delete</button>\n            </td>`;
+          els.tbody.appendChild(tr);
+        }
+        renderPagination(pages);
+        attachRowHandlers();
+      }
+
+      function renderPagination(pages){
+        if(!els.pagination) return;
+        els.pagination.innerHTML = '';
+        for(let i=1;i<=pages;i++){
+          const btn = document.createElement('button');
+          btn.textContent = i;
+          btn.className = 'page-btn' + (i===currentPage? ' active' : '');
+          btn.style.padding = '6px 8px';
+          btn.style.borderRadius = '6px';
+          btn.style.border = '1px solid #ddd';
+          btn.style.background = i===currentPage? 'var(--accent)' : '#fff';
+          btn.style.color = i===currentPage? '#fff' : '';
+          btn.addEventListener('click', ()=>{ currentPage = i; renderUsers(); });
+          els.pagination.appendChild(btn);
+        }
+      }
+
+      function attachRowHandlers(){
+        document.querySelectorAll('.edit').forEach(b=> b.onclick = ()=> openEditModal(b.dataset.id));
+        document.querySelectorAll('.delete').forEach(b=> b.onclick = ()=> deleteUser(b.dataset.id));
+      }
+
+      async function addUser(e){
+        e.preventDefault();
+        const name = document.getElementById('name').value.trim();
+        const email = document.getElementById('email').value.trim();
+        const phone = document.getElementById('phone').value.trim();
+        if(!name || !email) return showMessage('Name and email required', true);
+        try{
+          const res = await fetch(API_BASE, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name,email,phone}) });
+          if(!res.ok) throw new Error('Create failed');
+          const created = await res.json();
+          users.unshift(created);
+          els.createForm.reset();
+          renderUsers();
+          showMessage('User added');
+        }catch(err){ showMessage(err.message, true); }
+      }
+
+      function openEditModal(id){
+        const user = users.find(u => String(u.id) === String(id));
+        if(!user) return showMessage('User not found', true);
+        document.getElementById('edit-name').value = user.name || '';
+        document.getElementById('edit-email').value = user.email || '';
+        document.getElementById('edit-phone').value = user.phone || '';
+        els.editForm.dataset.id = id;
+        els.modal.setAttribute('aria-hidden','false');
+      }
+
+      async function updateUser(e){
+        e.preventDefault();
+        const id = els.editForm.dataset.id;
+        const name = document.getElementById('edit-name').value.trim();
+        const email = document.getElementById('edit-email').value.trim();
+        const phone = document.getElementById('edit-phone').value.trim();
+        try{
+          const res = await fetch(`${API_BASE}/${id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id,name,email,phone}) });
+          if(!res.ok) throw new Error('Update failed');
+          const updated = await res.json();
+          const i = users.findIndex(u=> String(u.id) === String(id));
+          if(i>-1) users[i] = updated;
+          els.modal.setAttribute('aria-hidden','true');
+          renderUsers();
+          showMessage('User updated');
+        }catch(err){ showMessage(err.message, true); }
+      }
+
+      async function deleteUser(id){
+        if(!confirm('Delete this user?')) return;
+        try{
+          const res = await fetch(`${API_BASE}/${id}`, { method:'DELETE' });
+          if(!(res.ok || res.status===200 || res.status===204)) throw new Error('Delete failed');
+          users = users.filter(u => String(u.id) !== String(id));
+          renderUsers();
+          showMessage('User removed');
+        }catch(err){ showMessage(err.message, true); }
+      }
+
+      function closeModal(){ els.modal.setAttribute('aria-hidden','true'); }
+
+      function escapeHtml(s=''){ return String(s).replace(/[&<>\"']/g, c=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"})[c]); }
+
+      document.addEventListener('DOMContentLoaded', ()=>{
+        fetchUsers();
+        els.search.addEventListener('input', ()=> renderUsers());
+        els.createForm.addEventListener('submit', addUser);
+        els.editForm.addEventListener('submit', updateUser);
+        document.getElementById('cancel-edit').addEventListener('click', closeModal);
+        els.modal.addEventListener('click', ev => { if(ev.target === els.modal) closeModal(); });
+      });
+    </script>
+  </body>
+</html>
